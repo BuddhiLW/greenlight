@@ -13,7 +13,12 @@ Following the book, `"Let's Go Further", Alex Edwards`.
 - [Clean Code Practices (221118111017-03)](#clean-code-practices-221118111017-03)
 - [Encapsulation](#encapsulation)
 - [**DRY** principle (221118123928-03)](#dry-principle-221118123928-03)
-- [`JSON` responses](#json-responses)
+- [`JSON` responses (221118144752-03)](#json-responses-221118144752-03)
+- [Clean Code, `DRY` (221118145846-03)](#clean-code-dry-221118145846-03)
+- [Change encoding of `structs` (221118162000-03)](#change-encoding-of-structs-221118162000-03)
+- [Optional directives (221118162809-03)](#optional-directives-221118162809-03)
+- [`Enveloping` - Make every response a `higher-level object` (221118165655-03)](#enveloping---make-every-response-a-higher-level-object-221118165655-03)
+- [TODO Format the `JSON` arbitrarily](#todo-format-the-json-arbitrarily)
 
 <!-- markdown-toc end -->
 
@@ -197,7 +202,11 @@ func (app *application) healthcheckHandler(w http.ResponseWriter, r *http.Reques
 }
 ```
 
-### Change encoding of structs
+OBS: `json.MarshalIndent(v interface{}, "", "\t")` will _pretty-print_ the
+response. **BUT**, at the cost that it will take 65% more time to run, and 30%
+more memory, than `json.Marshal()`.
+
+### Change encoding of `structs` (221118162000-03)
 
 Encoding `structs` is pretty straight forward. Furthermore, we can change the
 way the resulting encoding appears in `JSON`. For example, if you want to
@@ -245,10 +254,61 @@ func (app *application) showMovieHandler(w http.ResponseWriter, r *http.Request)
 }
 ```
 
-#### Optional directives
+#### Optional directives (221118162809-03)
 
 One can specify if the field should only be encoded if it's _non-empty_, or if
 it shouldn't be encoded at all.
 
 - `-`: use `json:"-"` to never encode field.
-- `omitempty`: use `json:"field_name, omitempty"` to encode only when _non-empty_
+- `omitempty`: use `json:"field_name, omitempty"` to encode only when _non-empty_.
+- `string`: use `json:"field_name, string"` to enforce encoding as _string_.
+
+OBS:
+
+> Hint: If you want to use omitempty and not change the key name then you can leave it
+> blank in the struct tag — like this: json:",omitempty" . Notice that the leading comma
+> is still required. (page 51)
+
+### `Enveloping` - Make every response a `higher-level object` (221118165655-03)
+
+We will have to change `writeJSON` at `/cmd/api/helpers.go`; `showMovieHandler`,
+at `/cmd/api/movies.go` and `healthcheckHandler` at `/cmd/api/healthcheck.go`.
+They all must conform to the new `whiteJSON` specification.
+
+First, we create a `envelope` _type_.
+
+At `helpers.go`,
+
+```go
+type envelope map[string]interface{}
+```
+
+And, change `writeJSON` to receive a `envelope` type, (`data envelope`).
+
+```go
+func (app *application) writeJSON(w http.ResponseWriter, status int, data envelope, headers http.Header) error {
+```
+
+Then, change `showMovieHandler`, because `writeJSON` must receive an `envelope` _type_.
+
+```go
+envel := envelope{"movie": movie}
+err = app.writeJSON(w, http.StatusOK, envel, nil)
+```
+
+Finally, change `healthcheckHandler`,
+
+```go
+envel := envelope{
+	"status": "available",
+	"system_info": map[string]string{
+		"status":      "available",
+		"environment": app.config.env,
+		"version":     version,
+	},
+}
+
+err := app.writeJSON(w, http.StatusOK, envel, nil)
+```
+
+### TODO Format the `JSON` arbitrarily
