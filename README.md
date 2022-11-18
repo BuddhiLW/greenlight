@@ -154,6 +154,10 @@ OBS: `interface{}` means any `type`, including `constructs`.
 It's extremely common to _Marshal_ and _Unmarshal_ Go data-structure and JSON.
 So, to insure we `DRY`, we will write helper functions.
 
+Also, this helper function let us add headers to your JSON encoding process.
+
+At `helpers.go`,
+
 ```go
 func (app *application) writeJSON(w http.ResponseWriter, status int, data interface{}, headers http.Header) error {
 	js, err := json.Marshal(data)
@@ -174,3 +178,77 @@ func (app *application) writeJSON(w http.ResponseWriter, status int, data interf
 	return nil
 }
 ```
+
+Rewriting `healthcheck.go`,
+
+```go
+func (app *application) healthcheckHandler(w http.ResponseWriter, r *http.Request) {
+	data := map[string]string{
+		"status":      "available",
+		"environment": app.config.env,
+		"version":     version,
+	}
+
+	err := app.writeJSON(w, http.StatusOK, data, nil)
+	if err != nil {
+		app.logger.Println(err)
+		http.Error(w, "The server couldn't complete the request", http.StatusInternalServerError)
+	}
+}
+```
+
+### Change encoding of structs
+
+Encoding `structs` is pretty straight forward. Furthermore, we can change the
+way the resulting encoding appears in `JSON`. For example, if you want to
+conform to _snake-case_.
+
+At, `internal/data/movies.go`,
+
+```go
+type Movie struct {
+	ID        int64     `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	Title     string    `json:"title"`
+	Year      int32     `json:"year"`
+	Runtime   int32     `json:"runtime"`
+	Genres    []string  `json:"genres"`
+	Version   int32     `json:"version"`
+}
+```
+
+At `cmd/api/movies.go`,
+
+```go
+func (app *application) showMovieHandler(w http.ResponseWriter, r *http.Request) {
+	id, err := app.readIDParam(r)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	movie := data.Movie{
+		ID:        id,
+		CreatedAt: time.Now(),
+		Title:     "Casablanca",
+		Runtime:   102,
+		Genres:    []string{"drama", "romance", "war"},
+		Version:   1,
+	}
+
+	err = app.writeJSON(w, http.StatusOK, movie, nil)
+	if err != nil {
+		app.logger.Println(err)
+		http.Error(w, "The server couldn't proceed with the request", http.StatusInternalServerError)
+	}
+
+}
+```
+
+#### Optional directives
+
+One can specify if the field should only be encoded if it's _non-empty_, or if
+it shouldn't be encoded at all.
+
+- `-`: use `json:"-"` to never encode field.
+- `omitempty`: use `json:"field_name, omitempty"` to encode only when _non-empty_
