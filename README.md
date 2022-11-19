@@ -140,7 +140,7 @@ func (app *application) showMovieHandler(w http.ResponseWriter, r *http.Request)
 }
 ```
 
-## `JSON` responses (221118144752-03)
+## `JSON` responses/encoding (221118144752-03)
 
 - `JSON`: `JavaScript Object Notation`, is a pure-text structured data. It's a map
   of key-value pairs. Each object is delimited, in between brackets `{}`. The
@@ -312,3 +312,138 @@ err := app.writeJSON(w, http.StatusOK, envel, nil)
 ```
 
 ### TODO Format the `JSON` arbitrarily
+
+## `JSON` requests/decoding (221119075356-03)
+
+### `createMovieHandler` - business logic (221119075724-03)
+
+Using `Decode` onto `json.NewDecoder`.
+
+`r.Body` (**JSON**) gets _decoded_ into a Go data-structure (**input-struct**), and stored inside the `input` variable.
+
+```go
+func (app *application) createMovieHandler(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Title   string   `json:"title"`
+		Year    int32    `json:"year"`
+		Runtime int32    `json:"runtime"`
+		Genres  []string `json:"genres"`
+	}
+
+	err := json.NewDecoder(r.Body).Decode(&input)
+	if err != nil {
+		app.errorResponse(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	fmt.Fprintf(w, "%+v\n", input)
+}
+```
+
+- What does it mean to use `%+v` as the printing format? (221119080509-03)
+
+  > Printing. The verbs: General: `%v` the value in a default
+  > format when printing structs, the plus flag (`%+v`) adds field
+  > names `%#v` a Go-syntax representation of the value `%T`
+
+But, as we want to error-handle, the function will become,
+
+```go
+func (app *application) createMovieHandler(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Title   string   `json:"title"`
+		Year    int32    `json:"year"`
+		Runtime int32    `json:"runtime"`
+		Genres  []string `json:"genres"`
+	}
+
+	err := app.readJSON(w, r, &input)
+	if err != nil {
+		app.errorResponse(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	fmt.Fprintf(w, "%+v\n", input)
+}
+```
+
+`readJSON` not only will decode, but will also error-handle the application, regarding all expected production-errors possible.
+
+### `POST` example using `curl` (221119075625-03)
+
+```sh
+$ curl -d '{"title":"Moana","runtime":107, "genres":["animation","adventure"]}' http://localhost:4000/v1/movies
+```
+
+```sh
+{Title:Moana Year:0 Runtime:107 Genres:[animation adventure]}
+```
+
+### Error handling - `readJSON` method (221119092520-03)
+
+This will ensure `resiliance` and `uniformity` to our `POST` request errors.
+
+The list of **Errors** we will friendly-handle:
+
+- Maximum size of 1 MB (security related: `DoS`).
+- Tell the user there are unknown-fields being sent to us, which we refuse to
+  handle.
+- Syntax Error.
+- Field-type Error.
+- Empty `POST` request.
+- Any other invalid requests will return panic.
+- Any other kind of error, if not the above, will send the default
+  Go-implemented error for that case.
+
+```go
+func (app *application) readJSON(w http.ResponseWriter, r *http.Request, dst interface{}) error {
+
+	maxBytes := 1_048_576
+	r.Body = http.MaxBytesReader(w, r.Body, int64(maxBytes))
+
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+
+	err := dec.Decode(dst)
+	if err != nil {
+		var syntaxError *json.SyntaxError
+		var unmarshalTypeError *json.UnmarshalTypeError
+		var invalidUnmarshalError *json.InvalidUnmarshalError
+
+		switch {
+		case errors.As(err, &syntaxError):
+			return fmt.Errorf("body contains badly-formated JSON (at character %d).",
+				syntaxError.Offset)
+
+		case errors.Is(err, io.ErrUnexpectedEOF):
+			return errors.New("Body contains badly-formated JSON.")
+
+		case errors.As(err, &unmarshalTypeError):
+			if unmarshalTypeError.Field != "" {
+				return fmt.Errorf("Body contains incorrect JSON type for field %q.",
+					unmarshalTypeError.Field)
+			}
+			return fmt.Errorf("Body contains incorrect JSON type (at chracter %d)", unmarshalTypeError.Offset)
+
+		case errors.Is(err, io.EOF):
+			return errors.New("Body must not be empty.")
+
+		// regex that the error is of type "json: unkown field"
+		case strings.HasPrefix(err.Error(), "json: unknown field "):
+			// remove the "json: unkown field" sentence, from the error - remains the field name.
+			fieldName := strings.TrimPrefix(err.Error(), "json: unkown field")
+			return fmt.Errorf("Body contains unkown key %s", fieldName)
+
+		case err.Error() == "http: request body too large":
+			return fmt.Errorf("Body must not be larger than %d bytes", maxBytes)
+
+		case errors.As(err, &invalidUnmarshalError):
+			panic(err)
+
+		default:
+			return err
+		}
+	}
+```
+
+### Custom JSON Decoding - Chap 4.4 (221119093555-03)
