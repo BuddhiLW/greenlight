@@ -13,12 +13,21 @@ Following the book, `"Let's Go Further", Alex Edwards`.
 - [Clean Code Practices (221118111017-03)](#clean-code-practices-221118111017-03)
 - [Encapsulation](#encapsulation)
 - [**DRY** principle (221118123928-03)](#dry-principle-221118123928-03)
-- [`JSON` responses (221118144752-03)](#json-responses-221118144752-03)
+- [`JSON` responses/encoding (221118144752-03)](#json-responsesencoding-221118144752-03)
 - [Clean Code, `DRY` (221118145846-03)](#clean-code-dry-221118145846-03)
 - [Change encoding of `structs` (221118162000-03)](#change-encoding-of-structs-221118162000-03)
 - [Optional directives (221118162809-03)](#optional-directives-221118162809-03)
 - [`Enveloping` - Make every response a `higher-level object` (221118165655-03)](#enveloping---make-every-response-a-higher-level-object-221118165655-03)
 - [TODO Format the `JSON` arbitrarily](#todo-format-the-json-arbitrarily)
+- [`JSON` requests/decoding (221119075356-03)](#json-requestsdecoding-221119075356-03)
+- [`createMovieHandler` - business logic (221119075724-03)](#createmoviehandler---business-logic-221119075724-03)
+- [`POST` example using `curl` (221119075625-03)](#post-example-using-curl-221119075625-03)
+- [Error handling - `readJSON` method (221119092520-03)](#error-handling---readjson-method-221119092520-03)
+- [Custom JSON Decoding - Chap 4.4 (221119093555-03)](#custom-json-decoding---chap-44-221119093555-03)
+- [`json.Unmarshaler` interface -- The solution (221120114402-03)](#jsonunmarshaler-interface----the-solution-221120114402-03)
+- [`UnmarshalJSON` method implementation for `Runtime` (221120120058-03)](#unmarshaljson-method-implementation-for-runtime-221120120058-03)
+- [`CURL` example (221120122039-03)](#curl-example-221120122039-03)
+- [Resources](#resources)
 
 <!-- markdown-toc end -->
 
@@ -450,7 +459,7 @@ func (app *application) readJSON(w http.ResponseWriter, r *http.Request, dst int
 
 Conversely to `JSON encoding` _runtime_ as `"runtime": "<runtime> mins"` - which
 we already did at the `Format the JSON arbitrarily` topic - we can enforce that
-requests are only accepted using the same format.
+requests are only `decoded`, by using the same format.
 
 Currently, we would get:
 
@@ -587,3 +596,132 @@ curl -d '{"title": "Moana", "runtime": "107 minutes"}' localhost:4000/v1/movies
         "error": "Invalid 'runtime' format, should be '_runtime_ mins'"
 }
 ```
+
+## Validating `JSON` Input (221120140913-03)
+
+We will perform validation of the _JSON_ `POST` request, following certain
+business-rules restrictions:
+
+> - The movie title provided by the client is not empty and is not more than 500 bytes long.
+> - The movie year is not empty and is between 1888 and the current year.
+> - The movie runtime is not empty and is a positive integer.
+> - The movie has between one and five (unique) genres.
+
+> If any of those checks fail, we want to send the client a `422 Unprocessable Entity ` response along with error messages which clearly describe the
+> validation failures.
+> (page 96)
+
+### Custom validator package (221120150759-03)
+
+In order to perform a list of restrictions on the JSON POST request, we could create a variable that consists of a list of key-value pair of errors. Because, a request could have none, one or many errors, related to our restrictive rules.
+
+We will implement these functions, and other `regex`-related help functions that help us accomplish this _validation_.
+
+In `internal/validator/validator.go`,
+
+```go
+package validator
+
+import "regexp"
+
+// from https://html.spec.whatwg.org/#valid-e-mail-address; adding '\' for each isolated "\".
+var (
+	EailRX = regexp.MustCompile("^[a-zA-Z0-9.!#$%&'*+\\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$")
+)
+
+type Validator struct {
+	Errors map[string]string
+}
+
+// Instantiate an empty Validator ("error list")
+func New() *Validator {
+	return &Validator{Errors: make(map[string]string)}
+}
+
+// If there is no errors, then it's a valid request
+func (v *Validator) Valid() bool {
+	return len(v.Errors) == 0
+}
+
+// if v.Errors[key] doesn't exist yet, add message-value to the v.Errors[key]
+func (v *Validator) AddError(key, message string) {
+	if _, exists := v.Errors[key]; !exists {
+		v.Errors[key] = message
+	}
+}
+
+func (v *Validator) Check(ok bool, key, message string) {
+	if !ok {
+		v.AddError(key, message)
+	}
+}
+
+func In(value string, list ...string) bool {
+	for i := range list {
+		if value == list[i] {
+			return true
+		}
+	}
+	return false
+}
+
+func Matches(value string, rx *regexp.Regexp) bool {
+	return rx.MatchString(value)
+}
+
+func Unique(values []string) bool {
+	uniqueValues := make(map[string]bool)
+
+	for _, value := range values {
+		uniqueValues[value] = true
+	}
+
+	return len(values) == len(uniqueValues)
+}
+```
+
+#### Implement new error message, related to `validator` (221120153026-03)
+
+In `cmd/api/errors.go`, add `422 Unprocessable Entity` type of error, for our application.
+
+```go
+func (app *application) failedValidationResponse(w http.ResponseWriter, r *http.Request, errors map[string]string) {
+	app.errorResponse(w, r, http.StatusUnprocessableEntity, errors)
+}
+```
+
+In `cmd/api/movies.go`, add the following checks `createMovieHandler`,
+
+```go
+v := validator.New()
+// Check if title is not empty. If it is empty (check is False), add title-type error
+v.Check(!(input.Title == ""), "title", "Must be provided")
+// Check if title is not less then 500 bytes. If it is greater (check is False), add title-type error
+v.Check(!(len(input.Title) <= 500), "title", "Must not be more than 500 bytes long")
+
+v.Check(!(input.Runtime < 0), "runtime", "Must be a positive integer")
+v.Check(!(input.Runtime == 0), "runtime", "Must be provided")
+
+// Check if year value is not empty
+v.Check(!(input.Year == 0), "year", "Must be provided")
+// Check if year is not lesser than 1888
+v.Check(!(input.Year < 1888), "year", "Must be greater than 1888")
+// Check if movie-year is not a value greater than current year it's being added
+v.Check(!(input.Year >= int32(time.Now().Year())), "year", "Must not be in the future")
+
+v.Check(!(input.Genres == nil), "genres", "Must be provided")
+v.Check(!(len(input.Genres) <= 1), "genres", "Must contain at lest one genre")
+v.Check(!(len(input.Genres) >= 5), "genres", "Must not contain more than 5 genres")
+v.Check(validator.Unique(input.Genres), "genres", "Must not contain duplicates")
+
+if !v.Valid() {
+	app.failedValidationResponse(w, r, v.Errors)
+	return
+}
+```
+
+# Resources
+
+- https://html.spec.whatwg.org/#valid-e-mail-address (spec for e-mail validation
+  regex)
+- https://github.com/xescugc/marshaler (Custom-type URL marsheler implementation)
