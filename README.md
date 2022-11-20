@@ -447,3 +447,143 @@ func (app *application) readJSON(w http.ResponseWriter, r *http.Request, dst int
 ```
 
 ### Custom JSON Decoding - Chap 4.4 (221119093555-03)
+
+Conversely to `JSON encoding` _runtime_ as `"runtime": "<runtime> mins"` - which
+we already did at the `Format the JSON arbitrarily` topic - we can enforce that
+requests are only accepted using the same format.
+
+Currently, we would get:
+
+```sh
+curl -d '{"title": "Moana", "runtime": "107 mins"}' localhost:4000/v1/movies
+```
+
+```sh
+{
+        "error": "Body contains incorrect JSON type for field \"runtime\"."
+}
+```
+
+> To make this work, what we need to do is _intercept the decoding process_ and
+> manually convert the `"<runtime> mins"` JSON string into an `int32` instead.
+> (Alex Edwards, page 92)
+
+### `json.Unmarshaler` interface -- The solution (221120114402-03)
+
+> type Unmarshaler ¶
+
+```go
+ type Unmarshaler interface {
+	UnmarshalJSON([]byte) error
+ }
+```
+
+> Unmarshaler is the interface implemented by types that can unmarshal
+> a JSON description of themselves. The input can be assumed to be a
+> valid encoding of a JSON value. UnmarshalJSON must copy the JSON
+> data if it wishes to retain the data after returning.
+>
+> By convention, to approximate the behavior of Unmarshal itself,
+> Unmarshalers implement UnmarshalJSON([]byte("null")) as a no-op.
+> [https://pkg.go.dev/encoding/json#Unmarshaler](https://pkg.go.dev/encoding/json#Unmarshaler)
+
+If the a decoding `destination type` implements a `UnmarshalJSON` method, then
+when the decoding of this type will use this method.
+
+So, all we got to do is implement the `UnmarshalJSON` method for the `Runtime` type.
+
+#### `UnmarshalJSON` method implementation for `Runtime` (221120120058-03)
+
+NOTE that once we wrote, at `internal/data/runtime.go`,
+
+```go
+type Runtime int32
+```
+
+The `Runtime` custom type now behaves as the underlying `int32` type, except
+it's hard-coded methods - namely, `UnmarshalJSON` - can be re-implemented.
+
+So, we go to `cmd/api/movies.go`, as make the `input` struct have a `Runtime`
+field of type `data.Runtime`.
+
+```go
+func (app *application) createMovieHandler(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Title   string       `json:"title"`
+		Year    int32        `json:"year"`
+		Runtime data.Runtime `json:"runtime"` // Make this field a data.Runtime type.
+		Genres  []string     `json:"genres"`
+	}
+
+	...
+}
+```
+
+And, we re-implement the `UnmarshalJSON` method for `Runtime`, at
+`internal/data/runtime.go`.
+
+**GOAL:** transform _<runtime> mins_ `string`-type into a `Runtime` type and
+ship it to our `r` `Runtime` type variable; _<runtime> mins_ comes as a
+`[]byte`, which will be our `jsonValue` variable argument.
+
+`UnmarshalJSON: ("<runtime> mins" []byte) -> (<runtime> Runtime)`
+
+```go
+var ErrInvalidRuntimeFormat = errors.New("Invalid 'runtime' format, should be '<runtime> mins'")
+
+func (r *Runtime) UnmarshalJSON(jsonValue []byte) error {
+
+	unquotedJSONValue, err := strconv.Unquote(string(jsonValue))
+	if err != nil {
+		return ErrInvalidRuntimeFormat
+	}
+
+	parts := strings.Split(unquotedJSONValue, " ")
+	if len(parts) != 2 || parts[1] != "mins" {
+		return ErrInvalidRuntimeFormat
+	}
+
+	i, err := strconv.ParseInt(parts[0], 10, 32)
+	if err != nil {
+		return ErrInvalidRuntimeFormat
+	}
+
+	*r = Runtime(i)
+
+	return nil
+}
+```
+
+#### `CURL` example (221120122039-03)
+
+> You should see that the request completes successfully, and the number is
+> extracted from the string and assigned the `Runtime` field of our `input`
+> struct. (page 94-95)
+
+```sh
+curl -d '{"title": "Moana", "runtime": "107 mins"}' localhost:4000/v1/movies
+```
+
+```sh
+{Title:Moana Year:0 Runtime:107 Genres:[]}
+```
+
+```sh
+curl -d '{"title": "Moana", "runtime": 107}' localhost:4000/v1/movies
+```
+
+```sh
+{
+        "error": "Invalid 'runtime' format, should be '_runtime_ mins'"
+}
+```
+
+```sh
+curl -d '{"title": "Moana", "runtime": "107 minutes"}' localhost:4000/v1/movies
+```
+
+```sh
+{
+        "error": "Invalid 'runtime' format, should be '_runtime_ mins'"
+}
+```
