@@ -7,7 +7,6 @@ import (
 )
 
 func (app *application) routes() *httprouter.Router {
-
 	r := httprouter.New()
 
 	r.NotFound = http.HandlerFunc(app.notFoundResponse)

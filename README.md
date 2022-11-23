@@ -720,6 +720,62 @@ if !v.Valid() {
 }
 ```
 
+## `DRY` validation-logic (221122192341-03)
+
+Both `PUT` and `POST` of movies will have to comply to the same
+validation-logic. So, let's isolate the validation logic.
+
+In `internal/data/movies.go` - because it's a validator for the movie-data,
+
+```go
+func ValidateMovie(v *validator.Validator, movie *Movie) {
+	// Check if title is not empty. If it is empty (check is False), add title-type error
+	v.Check(!(movie.Title == ""), "title", "Must be provided")
+	// Check if title is not less then 500 bytes. If it is greater (check is False), add title-type error
+	v.Check(!(len(movie.Title) <= 500), "title", "Must not be more than 500 bytes long")
+
+	// Check if runtime is a positive, non-zero, number
+	v.Check(!(movie.Runtime < 0), "runtime", "Must be a positive integer")
+	v.Check(!(movie.Runtime == 0), "runtime", "Must be provided")
+
+	// Check if year value is not empty
+	v.Check(!(movie.Year == 0), "year", "Must be provided")
+	// Check if year is not lesser than 1888
+	v.Check(!(movie.Year < 1888), "year", "Must be greater than 1888")
+	// Check if movie-year is not a value greater than current year it's being added
+	v.Check(!(movie.Year >= int32(time.Now().Year())), "year", "Must not be in the future")
+
+	// Check if Genre is empty
+	v.Check(!(movie.Genres == nil), "genres", "Must be provided")
+	// Check if there is at least one Genre
+	v.Check(!(len(movie.Genres) <= 1), "genres", "Must contain at lest one genre")
+	// Check if there is less than five Genres
+	v.Check(!(len(movie.Genres) >= 5), "genres", "Must not contain more than 5 genres")
+	// Check the uniqueness of each Genre
+	v.Check(validator.Unique(movie.Genres), "genres", "Must not contain duplicates")
+}
+```
+
+Refactor `createMovieHandler` to comply (copy data from input to movie), in `cmd/api/movies.go`.
+
+```go
+movie := &data.Movie{
+	Title:   input.Title,
+	Year:    input.Year,
+	Runtime: input.Runtime,
+	Genres:  input.Genres,
+}
+
+v := validator.New()
+
+if data.ValidateMovie(v, movie); !v.Valid() {
+	app.failedValidationResponse(w, r, v.Errors)
+	return
+}
+
+fmt.Fprintf(w, "%+v\n", input)
+```
+
 # Resources
 
 - https://html.spec.whatwg.org/#valid-e-mail-address (spec for e-mail validation
