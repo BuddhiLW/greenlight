@@ -720,7 +720,7 @@ if !v.Valid() {
 }
 ```
 
-## `DRY` validation-logic (221122192341-03)
+### `DRY` validation-logic (221122192341-03)
 
 Both `PUT` and `POST` of movies will have to comply to the same
 validation-logic. So, let's isolate the validation logic.
@@ -774,6 +774,66 @@ if data.ValidateMovie(v, movie); !v.Valid() {
 }
 
 fmt.Fprintf(w, "%+v\n", input)
+```
+
+## Database - PostgreSQL (221123111715-03)
+
+### Initializing steps (221123111928-03)
+
+- Login as `posgres` superuser.
+
+```sh
+sudo -u postgres psql
+```
+
+- Create database `greenlight`.
+
+```sh
+postgres=# CREATE DATABASE greenlight;
+CREATE DATABASE
+```
+
+- Connect to database.
+
+```sh
+postgres=# \c greenlight
+You are now connected to database "greenlight" as user "postgres".
+```
+
+### `citext` extension (221123112526-03)
+
+> This adds a case-insensitive character string type to PostgreSQL, which we will use later in the book to store user email addresses. It’s important to note that extensions can only be added by superusers, to a specific database.
+
+Therefore, we will create a `greenlight` user that can add the extension to the database.
+
+```sh
+greenlight=# CREATE ROLE greenlight WITH LOGIN PASSWORD 'pa55';
+CREATE ROLE
+
+greenlight=# CREATE EXTENSION IF NOT EXISTS citext;
+CREATE EXTENSION
+```
+
+### Use database as `greenlight` user (221123113052-03)
+
+```sh
+$ psql --host=localhost --dbname=greenlight --username=greenlight
+psql (14.5)
+Type "help" for help.
+
+greenlight=> SELECT current_user;
+current_user
+--------------
+greenlight
+(1 row)
+```
+
+### Tweak `postgres.conf` for performance
+
+Localize the config file,
+
+```sh
+sudo -u postgres psql -c 'SHOW config_file';
 ```
 
 # Resources
