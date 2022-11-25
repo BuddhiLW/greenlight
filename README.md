@@ -836,6 +836,22 @@ Localize the config file,
 sudo -u postgres psql -c 'SHOW config_file';
 ```
 
+### Data Source Name (`DSN`) (221125140108-03)
+
+- `Data Source Name`: codified string with the configuration parameters to
+  connect to the database.
+
+With `postgres`, and considering our configuration, and out `pq`-driver for
+postgres through Go, we write[^1]:
+
+```sh
+postgres://greenlight:pa55@localhost/greenlight?sslmode=disable
+```
+
+# Notes
+
+[^1]: disable ssl mode, because of "pq: SSL is not enabled on the server" error.
+
 # Resources
 
 - https://html.spec.whatwg.org/#valid-e-mail-address (spec for e-mail validation

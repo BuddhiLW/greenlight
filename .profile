@@ -1,0 +1,3 @@
+#!/usr/bin/env sh
+
+export GREENLIGHT_DB_DSN='postgres://greenlight:pa55word@localhost/greenlight?sslmode=disable'
